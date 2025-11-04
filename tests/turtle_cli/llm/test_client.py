@@ -9,6 +9,19 @@ def llm_client(monkeypatch):
     monkeypatch.setenv("LITELLM_API_KEY", "fake_api_key")
     return LLMClient(provider="openai", api_key=os.getenv("LITELLM_API_KEY"), model="gpt-3.5-turbo")
 
+def test_init_raises_when_provider_missing():
+    with pytest.raises(ValueError, match="Provider must be specified."):
+        LLMClient(provider="", api_key="key", model="gpt-3.5-turbo")
+
+
+def test_init_raises_when_api_key_missing():
+    with pytest.raises(ValueError, match="API key must be provided."):
+        LLMClient(provider="openai", api_key="", model="gpt-3.5-turbo")
+
+
+def test_init_raises_when_model_missing():
+    with pytest.raises(ValueError, match="Model must be specified."):
+        LLMClient(provider="openai", api_key="key", model="")
 
 @patch("turtle_cli.llm.client.completion")
 def test_chat_success(mock_completion, llm_client):
@@ -76,6 +89,34 @@ def test_stream_success(mock_completion, llm_client):
         stream=True
     )
 
+@patch("turtle_cli.llm.client.completion")
+def test_chat_raises_api_error(mock_completion, llm_client):
+    from litellm import APIError
+    from tenacity import RetryError
+
+    mock_completion.side_effect = APIError(
+        500, "API down", "openai", "gpt-3.5-turbo"
+    )
+
+    with pytest.raises(RetryError) as exc_info:
+        llm_client.chat(messages=[{"role": "user", "content": "test"}])
+    
+    assert isinstance(exc_info.value.last_attempt.exception(), APIError)
+
+def test_chat_empty_messages(llm_client):
+    with pytest.raises(ValueError, match="Messages list cannot be empty."):
+        llm_client.chat(messages=[])
+
+def test_stream_empty_messages(llm_client):
+    with pytest.raises(ValueError, match="Messages list cannot be empty."):
+        list(llm_client.stream(messages=[]))
+
+@patch("turtle_cli.llm.client.completion")
+def test_stream_raises_exception(mock_completion, llm_client):
+    mock_completion.side_effect = Exception("Stream failure")
+
+    with pytest.raises(Exception, match="Stream failure"):
+        list(llm_client.stream(messages=[{"role": "user", "content": "Hi!"}]))
 
 def test_list_model(llm_client):
     assert llm_client.list_model() == ["gpt-3.5-turbo"]
